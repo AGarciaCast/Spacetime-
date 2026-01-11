@@ -5,7 +5,7 @@ from typing import Dict, Optional, Union
 import torch
 import torch.nn as nn
 
-from archs_utils import (
+from toy_experiments.PathFinding.models.archs_utils import (
     Activation,
     _init_linear_weights,
     _init_weight_tensor,

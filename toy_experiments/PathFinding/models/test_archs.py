@@ -4,7 +4,7 @@ import pytest
 import torch
 import torch.nn as nn
 
-from archs import (
+from toy_experiments.PathFinding.models.archs import (
     FourierEmbs,
     ReparamDense,
     MLP,
