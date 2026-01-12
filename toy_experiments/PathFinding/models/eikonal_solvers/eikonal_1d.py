@@ -30,7 +30,7 @@ class NeuralEikonalSolver_1D(NeuralEikonalSolver):
         lambda_min: float = -30,
         lambda_max: float = 30,
     ):
-        super(NeuralEikonalSolver, self).__init__(
+        super().__init__(
             dim_signal=dim_signal,
             backbone_type=backbone_type,
             hidden_dim=hidden_dim,
@@ -43,6 +43,8 @@ class NeuralEikonalSolver_1D(NeuralEikonalSolver):
             factored=factored,
             normalize_domain=normalize_domain,
         )
+
+        assert dim_signal == 1, "NeuralEikonalSolver_1D only supports 1D signals."
 
         self.lambda_min = lambda_min
         self.lambda_max = lambda_max

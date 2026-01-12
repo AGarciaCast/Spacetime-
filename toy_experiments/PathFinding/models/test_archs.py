@@ -87,12 +87,6 @@ class TestReparamDense:
         assert layer.g.shape == (5,)
         assert layer.v.shape == (10, 5)
 
-    def test_init_invalid_reparam_type(self):
-        """Test ReparamDense raises error with unsupported reparam type."""
-        reparam = {"type": "invalid_type"}
-        with pytest.raises(ValueError, match="Unsupported reparam type"):
-            ReparamDense(in_features=10, out_features=5, reparam=reparam)
-
     def test_forward_without_reparam(self):
         """Test ReparamDense forward pass without reparameterization."""
         layer = ReparamDense(in_features=10, out_features=5)

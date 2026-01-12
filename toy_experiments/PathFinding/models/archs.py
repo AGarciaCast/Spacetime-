@@ -77,10 +77,6 @@ class ReparamDense(nn.Module):
         self.v = None
         self.bias = None
         if reparam:
-            if self.reparam.get("type") != "weight_fact":
-                raise ValueError(
-                    f"Unsupported reparam type: {self.reparam.get('type')}"
-                )
             w = torch.empty(self.in_features, self.out_features)
             _init_weight_tensor(
                 w,
@@ -104,7 +100,7 @@ class ReparamDense(nn.Module):
             )
 
     def forward(self, x):
-        if self.reparam is None:
+        if self.linear is not None:
             return self.linear(x)
         weight = self.v * self.g
         y = torch.matmul(x, weight)

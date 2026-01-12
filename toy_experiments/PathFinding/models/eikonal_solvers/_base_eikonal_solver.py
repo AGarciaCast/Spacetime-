@@ -28,7 +28,7 @@ class NeuralEikonalSolver(nn.Module):
         super(NeuralEikonalSolver, self).__init__()
 
         self.backbone = get_backbone(backbone_type)(
-            input_dim=dim_signal + 1,
+            input_dim=2 * (dim_signal + 1),
             hidden_dim=hidden_dim,
             num_layers=num_layers,
             activation=activation,
