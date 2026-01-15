@@ -15,120 +15,16 @@ import numpy as np
 import torch
 import pytorch_lightning as pl
 from torch import nn
+
+from torch.optim.lr_scheduler import LinearLR, ExponentialLR, SequentialLR
+
+from omegaconf import OmegaConf
 import time
 
 
 from tqdm import tqdm
 
 EPSILON = 1e-8
-
-
-def _get_config_value(config, opt_config, name, default=None, alt_names=None):
-    if alt_names is None:
-        alt_names = []
-    for key in [name] + alt_names:
-        if opt_config is not None and hasattr(opt_config, key):
-            return getattr(opt_config, key)
-        if hasattr(config, key):
-            return getattr(config, key)
-    return default
-
-
-def _create_optimizer(config, params):
-
-    opt_config = getattr(config, "optimizer", None)
-    optimizer_name = _get_config_value(
-        config, opt_config, "optimizer", alt_names=["name", "type"]
-    )
-    learning_rate = _get_config_value(
-        config, opt_config, "learning_rate", alt_names=["lr"], default=1e-3
-    )
-    weight_decay = _get_config_value(config, opt_config, "weight_decay", default=0.0)
-    beta1 = _get_config_value(config, opt_config, "beta1", default=0.9)
-    beta2 = _get_config_value(config, opt_config, "beta2", default=0.999)
-    eps = _get_config_value(config, opt_config, "eps", default=1e-8)
-    warmup_steps = _get_config_value(config, opt_config, "warmup_steps", default=0)
-    decay_steps = _get_config_value(config, opt_config, "decay_steps", default=0)
-    decay_rate = _get_config_value(config, opt_config, "decay_rate", default=1.0)
-    staircase = _get_config_value(config, opt_config, "staircase", default=False)
-    schedule_free = _get_config_value(
-        config, opt_config, "schedule_free", default=False
-    )
-
-    if optimizer_name == "Adam":
-        optimizer = torch.optim.Adam(
-            params,
-            lr=learning_rate,
-            betas=(beta1, beta2),
-            eps=eps,
-            weight_decay=weight_decay,
-        )
-
-    elif optimizer_name == "Soap":
-        try:
-            from soap import SOAP
-        except ImportError as exc:
-            raise ImportError(
-                "Soap optimizer requested but not available. "
-                "Provide a SOAP optimizer implementation or install its package."
-            ) from exc
-
-        optimizer = SOAP(
-            params,
-            lr=learning_rate,
-            betas=(beta1, beta2),
-            eps=eps,
-            weight_decay=0.0,
-            precondition_frequency=2,
-        )
-
-    elif optimizer_name == "Muon":
-        ns_coefficients = _get_config_value(
-            config, opt_config, "ns_coefficients", default=(2, -1.5, 0.5)
-        )
-        ns_steps = _get_config_value(config, opt_config, "ns_steps", default=10)
-        momentum = _get_config_value(
-            config, opt_config, "beta", default=0.99, alt_names=["momentum"]
-        )
-        nesterov = _get_config_value(config, opt_config, "nesterov", default=True)
-
-        try:
-            optimizer = torch.optim.Muon(
-                params,
-                lr=learning_rate,
-                weight_decay=weight_decay,
-                momentum=momentum,
-                nesterov=nesterov,
-                ns_coefficients=ns_coefficients,
-                eps=eps,
-                ns_steps=ns_steps,
-            )
-        except AttributeError as exc:
-            raise ImportError(
-                "Muon optimizer requested but torch.optim.Muon is not available."
-            ) from exc
-
-    else:
-        raise ValueError(f"Unknown optimizer: {optimizer_name}")
-
-    scheduler = None
-    # if warmup_steps > 0 or decay_steps > 0:
-
-    #     def lr_lambda(step):
-    #         if warmup_steps > 0 and step < warmup_steps:
-    #             return float(step) / float(max(1, warmup_steps))
-    #         if decay_steps <= 0:
-    #             return 1.0
-    #         effective_step = step - warmup_steps if warmup_steps > 0 else step
-    #         if staircase:
-    #             exponent = effective_step // decay_steps
-    #         else:
-    #             exponent = effective_step / float(decay_steps)
-    #         return decay_rate**exponent
-
-    #     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda=lr_lambda)
-
-    return optimizer, scheduler
 
 
 class EikonalLightningModule(pl.LightningModule):
@@ -139,6 +35,10 @@ class EikonalLightningModule(pl.LightningModule):
         solver: torch.nn.Module,
     ):
         super().__init__()
+
+        self.save_hyperparameters(
+            {"config": OmegaConf.to_container(config, resolve=True)}
+        )
 
         self.config = config
         self.solver = solver
@@ -193,15 +93,6 @@ class EikonalLightningModule(pl.LightningModule):
                 prog_bar=False,
             )
 
-    def configure_gradient_clipping(
-        self, optimizer, gradient_clip_val, gradient_clip_algorithm
-    ):
-
-        for param in self.solver.parameters():
-            if param.grad is not None:
-                # Apply gradient clipping
-                torch.nn.utils.clip_grad_value_(param, gradient_clip_val)
-
     def forward(self, batch_coords, reuse_grad=False, aux_vel=False):
         # Forward pass through the model
         outputs = self.solver.times_grad_vel(batch_coords, reuse_grad, aux_vel)
@@ -217,20 +108,16 @@ class EikonalLightningModule(pl.LightningModule):
 
         # Calculate loss
         loss = self.eiko_loss(norm_grad)
-        self.log("train_eiko", loss, on_epoch=True, prog_bar=True)
+        self.log("train_eiko", loss, on_step=True, on_epoch=True, prog_bar=True)
 
         # Calculate metrics
-
         batch_mse = self.mse(pred_vel, torch.ones_like(pred_vel))
-        self.total_train_mse += batch_mse.item()
-        num_points_batch = pred_vel.shape[0] * pred_vel.shape[1] * 2.0
-        self.total_train_points += num_points_batch
 
         self.log(
             "train_mse_step",
-            batch_mse / num_points_batch,
-            on_step=True,
-            on_epoch=False,
+            batch_mse,
+            on_step=False,
+            on_epoch=True,
             prog_bar=True,
         )
 
@@ -250,35 +137,90 @@ class EikonalLightningModule(pl.LightningModule):
 
         # Calculate loss
         loss = self.eiko_loss(norm_grad)
-        self.log(f"{self.name_test}_eiko", loss, on_epoch=True, prog_bar=True)
+        self.log("val_eiko", loss, on_step=True, on_epoch=True, prog_bar=True)
 
         # Calculate metrics
         batch_mse = self.mse(pred_vel, torch.ones_like(pred_vel))
-        self.total_test_mse += batch_mse.item()
-        num_points_batch = pred_vel.shape[0] * pred_vel.shape[1] * 2
-        self.total_test_points += num_points_batch
 
         self.log(
-            f"{self.name_test}_mse_step",
-            batch_mse / num_points_batch,
+            "val_mse_step",
+            batch_mse,
             on_step=True,
-            on_epoch=False,
+            on_epoch=True,
             prog_bar=True,
         )
 
         return loss
 
-    def on_test_epoch_start(self):
-        self.on_validation_epoch_start()
-
-    def test_step(self, batch, batch_idx):
-        self.validation_step(batch, batch_idx)
-
-    def on_test_epoch_end(self):
-        self.on_validation_epoch_end()
-
     def configure_optimizers(self):
-        optimizer, scheduler = _create_optimizer(self.config, self.solver.parameters())
+        params = self.solver.parameters()
+        config = self.config.optimizer
+
+        optimizer_name = config.name
+        learning_rate = config.learning_rate
+        beta1 = config.beta1
+        beta2 = config.beta2
+        warmup_steps = config.warmup_steps
+        decay_rate = config.decay_rate
+
+        if optimizer_name == "Adam":
+            optimizer = torch.optim.Adam(
+                params,
+                lr=learning_rate,
+                betas=(beta1, beta2),
+                weight_decay=0.0,
+            )
+
+        elif optimizer_name == "Soap":
+            try:
+                from toy_experiments.PathFinding.modules.soap import SOAP
+            except ImportError as exc:
+                raise ImportError(
+                    "Soap optimizer requested but not available. "
+                    "Provide a SOAP optimizer implementation or install its package."
+                ) from exc
+
+            optimizer = SOAP(
+                params,
+                lr=learning_rate,
+                betas=(beta1, beta2),
+                weight_decay=0.0,
+                precondition_frequency=2,
+            )
+
+        elif optimizer_name == "Muon":
+
+            try:
+                optimizer = torch.optim.Muon(
+                    params,
+                    lr=learning_rate,
+                    weight_decay=0.0,
+                    momentum=0.99,
+                    ns_coefficients=(2, -1.5, 0.5),
+                    ns_steps=10,
+                )
+            except AttributeError as exc:
+                raise ImportError(
+                    "Muon optimizer requested but torch.optim.Muon is not available."
+                ) from exc
+
+        else:
+            raise ValueError(f"Unknown optimizer: {optimizer_name}")
+
+        scheduler = None
+        scheduler_active = config.use_lr_scheduler
+
+        if scheduler_active:
+            warmup_scheduler = LinearLR(
+                optimizer, start_factor=0.0, total_iters=warmup_steps
+            )
+            decay_scheduler = ExponentialLR(optimizer, gamma=decay_rate)
+            scheduler = SequentialLR(
+                optimizer,
+                schedulers=[warmup_scheduler, decay_scheduler],
+                milestones=[warmup_steps],
+            )
+
         if scheduler is None:
             return optimizer
         return {

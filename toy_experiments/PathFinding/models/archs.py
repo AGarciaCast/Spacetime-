@@ -55,7 +55,9 @@ class ReparamDense(nn.Module):
         self,
         in_features: int,
         out_features: int,
-        reparam: Union[None, Dict] = None,
+        use_reparam: bool = False,
+        reparam_mean: float = 0.0,
+        reparam_std: float = 0.1,
         bias: bool = True,
         activation: Optional[str] = None,
         is_first: bool = False,
@@ -64,19 +66,21 @@ class ReparamDense(nn.Module):
         super().__init__()
         self.in_features = int(in_features)
         self.out_features = int(out_features)
-        self.reparam = reparam
+        self.use_reparam = use_reparam
+        self.reparam_mean = float(reparam_mean)
+        self.reparam_std = float(reparam_std)
         self.activation = _resolve_act_name(activation)
         self.is_first = is_first
         self.omega0 = float(omega0)
         self.linear = (
             None
-            if reparam
+            if use_reparam
             else nn.Linear(self.in_features, self.out_features, bias=bias)
         )
         self.g = None
         self.v = None
         self.bias = None
-        if reparam:
+        if use_reparam:
             w = torch.empty(self.in_features, self.out_features)
             _init_weight_tensor(
                 w,
@@ -86,7 +90,7 @@ class ReparamDense(nn.Module):
             )
             g = torch.empty(self.out_features)
             nn.init.normal_(
-                g, mean=float(self.reparam["mean"]), std=float(self.reparam["stddev"])
+                g, mean=float(self.reparam_mean), std=float(self.reparam_std)
             )
             g = torch.exp(g)
             v = w / g
@@ -120,12 +124,21 @@ class MLP(nn.Module):
         out_dim=1,
         activation="ad-gauss-1",
         out_activation="linear",
-        fourier_emb: Union[None, Dict] = None,
-        reparam: Union[None, Dict] = None,
+        use_fourier_features: bool = False,
+        fourier_embed_scale: float = 10.0,
+        fourier_embed_dim: int = 256,
+        use_reparam: bool = False,
+        reparam_mean: float = 0.0,
+        reparam_std: float = 0.1,
+        nonlinearity: float = 0.0,  # only for PirateNet compatibility
     ):
         super(MLP, self).__init__()
 
-        self.embedding = FourierEmbs(**fourier_emb) if fourier_emb else None
+        self.embedding = (
+            FourierEmbs(embed_scale=fourier_embed_scale, embed_dim=fourier_embed_dim)
+            if use_fourier_features
+            else None
+        )
 
         if isinstance(hidden_dim, int):
             hidden_dim = [hidden_dim] * num_layers
@@ -146,7 +159,9 @@ class MLP(nn.Module):
         input_linear = ReparamDense(
             input_dim,
             hidden_dim[0],
-            reparam=reparam,
+            use_reparam=use_reparam,
+            reparam_mean=reparam_mean,
+            reparam_std=reparam_std,
             activation=activation,
             is_first=True,
         )
@@ -157,7 +172,9 @@ class MLP(nn.Module):
             linear = ReparamDense(
                 hidden_dim[i - 1],
                 hidden_dim[i],
-                reparam=reparam,
+                use_reparam=use_reparam,
+                reparam_mean=reparam_mean,
+                reparam_std=reparam_std,
                 activation=activation,
             )
             self.layers.append(linear)
@@ -168,7 +185,9 @@ class MLP(nn.Module):
         linear = ReparamDense(
             hidden_dim[-1],
             out_dim,
-            reparam=reparam,
+            use_reparam=use_reparam,
+            reparam_mean=reparam_mean,
+            reparam_std=reparam_std,
             activation=out_act_name,
         )
         self.layers.append(linear)
@@ -250,8 +269,12 @@ class PirateNet(nn.Module):
         activation: str = "tanh",
         out_activation: str = "linear",
         nonlinearity: float = 0.0,
-        fourier_emb: Union[None, Dict] = None,
-        reparam: Union[None, Dict] = None,
+        use_fourier_features: bool = False,
+        fourier_embed_scale: float = 10.0,
+        fourier_embed_dim: int = 256,
+        use_reparam: bool = False,
+        reparam_mean: float = 0.0,
+        reparam_std: float = 0.1,
     ) -> None:
         super().__init__()
         self.input_dim = int(input_dim)
@@ -260,20 +283,29 @@ class PirateNet(nn.Module):
         self.out_dim = int(out_dim)
         self.act_u = Activation(activation)
         self.act_v = Activation(activation)
-        self.reparam = reparam
-        self.embedding = FourierEmbs(**fourier_emb) if fourier_emb else None
+
+        self.embedding = (
+            FourierEmbs(embed_scale=fourier_embed_scale, embed_dim=fourier_embed_dim)
+            if use_fourier_features
+            else None
+        )
+
         embed_dim = self._embedding_dim()
         self.u_proj = ReparamDense(
             embed_dim,
             self.hidden_dim,
-            reparam=self.reparam,
+            use_reparam=use_reparam,
+            reparam_mean=reparam_mean,
+            reparam_std=reparam_std,
             activation=activation,
             is_first=True,
         )
         self.v_proj = ReparamDense(
             embed_dim,
             self.hidden_dim,
-            reparam=self.reparam,
+            use_reparam=use_reparam,
+            reparam_mean=reparam_mean,
+            reparam_std=reparam_std,
             activation=activation,
             is_first=True,
         )
@@ -292,7 +324,12 @@ class PirateNet(nn.Module):
         self.out_activation = Activation(out_activation)
         out_act_name = _resolve_act_name(out_activation)
         self.out_proj = ReparamDense(
-            embed_dim, self.out_dim, reparam=self.reparam, activation=out_act_name
+            embed_dim,
+            self.out_dim,
+            use_reparam=use_reparam,
+            reparam_mean=reparam_mean,
+            reparam_std=reparam_std,
+            activation=out_act_name,
         )
 
     def _embedding_dim(self):

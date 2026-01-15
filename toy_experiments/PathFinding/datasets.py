@@ -7,6 +7,9 @@ import torch
 from torch.utils.data import Dataset
 
 
+from torch.utils.data import DataLoader
+
+
 class CoordinateDataset(Dataset):
     def __init__(
         self,
@@ -33,22 +36,23 @@ class CoordinateDataset(Dataset):
             force_recompute (bool): If True, force recomputation of precomputed data.
         """
         self.num_pairs = num_pairs
-        
+
         # dim_signal is the number of space dimensions (excluding time)
         self.dim_signal = dim_signal
-        
+
         self.precomputed_dir = precomputed_dir
         self.save_data = save_data
         self.force_recompute = force_recompute
-        
-        self.sampling_strategy = sampling_strategy
 
+        self.sampling_strategy = sampling_strategy
 
         # Coordinate bounds: `time` component, and followed by the `space` components coords
         self.x_min = x_min
         self.x_max = x_max
 
-        assert len(self.x_min) == (self.dim_signal+1)and len(self.x_max) == (self.dim_signal+1)
+        assert len(self.x_min) == (self.dim_signal + 1) and len(self.x_max) == (
+            self.dim_signal + 1
+        )
 
         # Metadata file
         self.metadata_path = os.path.join(precomputed_dir, "metadata.json")
@@ -66,7 +70,9 @@ class CoordinateDataset(Dataset):
 
         # Check if recomputation is needed
 
-        saved_file_exist =  os.path.exists(os.path.join(self.precomputed_dir, f"samples.pt"))
+        saved_file_exist = os.path.exists(
+            os.path.join(self.precomputed_dir, f"samples.pt")
+        )
 
         current_params = {
             "num_pairs": self.num_pairs,
@@ -77,7 +83,10 @@ class CoordinateDataset(Dataset):
         }
 
         need_recompute = (
-            self.force_recompute or metadata == None or metadata != current_params or not saved_file_exist
+            self.force_recompute
+            or metadata == None
+            or metadata != current_params
+            or not saved_file_exist
         )
 
         if need_recompute:
@@ -89,7 +98,6 @@ class CoordinateDataset(Dataset):
         if self.save_data:
             precomputed_file = os.path.join(self.precomputed_dir, f"samples.pt")
             self.data = torch.load(precomputed_file, weights_only=False)
-
 
     def _load_metadata(self):
         """Load metadata from disk, if it exists."""
@@ -109,34 +117,112 @@ class CoordinateDataset(Dataset):
             if file.is_file():
                 os.remove(file.path)
 
-
     def _generate_coords(self):
-        
+
         coords = None
         if self.sampling_strategy == "uniform":
             """Generate random coordinate chunks for a single sample."""
-            coords = np.random.rand(self.num_pairs * 2, self.dim_signal+1)
+            coords = np.random.rand(self.num_pairs * 2, self.dim_signal + 1)
             coords = (self.x_max - self.x_min) * coords + self.x_min
             np.random.shuffle(coords)
-            coords=torch.tensor(coords, dtype=torch.float32)
+            coords = torch.tensor(coords, dtype=torch.float32)
         else:
-            raise NotImplementedError(f"Sampling strategy '{self.sampling_strategy}' is not implemented.")
-        
-        
-        self.data = coords.view(self.num_pairs, 2, self.dim_signal+1)
+            raise NotImplementedError(
+                f"Sampling strategy '{self.sampling_strategy}' is not implemented."
+            )
+
+        self.data = coords.view(self.num_pairs, 2, self.dim_signal + 1)
 
         # Save precomputed data to disk
         precomputed_file = os.path.join(self.precomputed_dir, f"samples.pt")
         torch.save(coords, precomputed_file)
-        
 
     def __len__(self):
         """Return the total number of sample pairs."""
         return len(self.data) if self.data is not None else 0
-    
+
     def __getitem__(self, idx):
         return self.data[idx], np.array([])
 
 
+def get_dataloaders(config):
 
+    dim_signal = config.solver.dim_signal
+    num_pairs = config.data.num_pairs
+    x_min = config.geometry.x_min
+    x_max = config.geometry.x_max
+    sampling_strategy = config.data.sampling_strategy
 
+    train_dataset = CoordinateDataset(
+        num_pairs=num_pairs,
+        dim_signal=dim_signal,
+        precomputed_dir=os.path.join(
+            "toy_experiments",
+            "PathFinding",
+            "data",
+            f"{sampling_strategy}__train",
+        ),
+        sampling_strategy=sampling_strategy,
+        x_min=x_min,
+        x_max=x_max,
+        save_data=config.data.train_save_data,
+        force_recompute=config.data.train_force_recompute,
+    )
+
+    val_dataset = CoordinateDataset(
+        num_pairs=num_pairs,
+        dim_signal=dim_signal,
+        precomputed_dir=os.path.join(
+            "toy_experiments",
+            "PathFinding",
+            "data",
+            f"{sampling_strategy}__val",
+        ),
+        sampling_strategy=sampling_strategy,
+        x_min=x_min,
+        x_max=x_max,
+        save_data=config.data.val_save_data,
+        force_recompute=config.data.val_force_recompute,
+    )
+
+    test_dataset = CoordinateDataset(
+        num_pairs=num_pairs,
+        dim_signal=dim_signal,
+        precomputed_dir=os.path.join(
+            "toy_experiments",
+            "PathFinding",
+            "data",
+            f"{sampling_strategy}__test",
+        ),
+        sampling_strategy=sampling_strategy,
+        x_min=x_min,
+        x_max=x_max,
+        save_data=config.data.test_save_data,
+        force_recompute=config.data.test_force_recompute,
+    )
+
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=config.data.train_batch_size,
+        shuffle=True,
+        num_workers=config.data.num_workers,
+        pin_memory=config.data.pin_memory,
+    )
+
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=config.data.test_batch_size,
+        shuffle=False,
+        num_workers=config.data.num_workers,
+        pin_memory=config.data.pin_memory,
+    )
+
+    test_loader = DataLoader(
+        test_dataset,
+        batch_size=config.data.test_batch_size,
+        shuffle=False,
+        num_workers=config.data.num_workers,
+        pin_memory=config.data.pin_memory,
+    )
+
+    return train_loader, val_loader, test_loader
