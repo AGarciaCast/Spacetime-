@@ -42,7 +42,10 @@ def train(config_name):
 
     # Create the dataset
     train_loader, val_loader, test_loader = get_dataloaders(cfg)
-
+    print(
+        f"Train dataset size: {len(train_loader.dataset)}, Val dataset size: {len(val_loader.dataset)}"
+    )
+    exit()
     # Init model
     solver = get_solver(cfg)
 

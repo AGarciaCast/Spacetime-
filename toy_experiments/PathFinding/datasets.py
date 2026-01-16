@@ -47,8 +47,8 @@ class CoordinateDataset(Dataset):
         self.sampling_strategy = sampling_strategy
 
         # Coordinate bounds: `time` component, and followed by the `space` components coords
-        self.x_min = x_min
-        self.x_max = x_max
+        self.x_min = np.array(x_min) if x_min is not None else np.zeros(dim_signal + 1)
+        self.x_max = np.array(x_max) if x_max is not None else np.ones(dim_signal + 1)
 
         assert len(self.x_min) == (self.dim_signal + 1) and len(self.x_max) == (
             self.dim_signal + 1
@@ -74,6 +74,7 @@ class CoordinateDataset(Dataset):
             os.path.join(self.precomputed_dir, f"samples.pt")
         )
 
+        print(self.x_min)
         current_params = {
             "num_pairs": self.num_pairs,
             "dim_signal": self.dim_signal,
@@ -147,7 +148,7 @@ class CoordinateDataset(Dataset):
 
 def get_dataloaders(config):
 
-    dim_signal = config.solver.dim_signal
+    dim_signal = config.geometry.dim_signal
     num_pairs = config.data.num_pairs
     x_min = config.geometry.x_min
     x_max = config.geometry.x_max
