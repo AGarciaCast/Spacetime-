@@ -212,7 +212,9 @@ class PIModifiedBottleneck(nn.Module):
         hidden_dim: int,
         activation: str,
         nonlinearity: float,
-        reparam: Union[None, Dict],
+        use_reparam: bool = False,
+        reparam_mean: float = 0.0,
+        reparam_std: float = 0.1,
     ) -> None:
         super().__init__()
         self.input_dim = int(input_dim)
@@ -221,21 +223,31 @@ class PIModifiedBottleneck(nn.Module):
         self.act1 = Activation(activation)
         self.act2 = Activation(activation)
         self.act3 = Activation(activation)
-        self.reparam = reparam
+        self.reparam_mean = float(reparam_mean)
+        self.reparam_std = float(reparam_std)
         self.alpha = nn.Parameter(torch.tensor([float(nonlinearity)]))
         self.dense1 = ReparamDense(
-            self.input_dim, self.hidden_dim, reparam=self.reparam, activation=activation
+            self.input_dim,
+            self.hidden_dim,
+            use_reparam=use_reparam,
+            reparam_mean=reparam_mean,
+            reparam_std=reparam_std,
+            activation=activation,
         )
         self.dense2 = ReparamDense(
             self.hidden_dim,
             self.hidden_dim,
-            reparam=self.reparam,
+            use_reparam=use_reparam,
+            reparam_mean=reparam_mean,
+            reparam_std=reparam_std,
             activation=activation,
         )
         self.dense3 = ReparamDense(
             self.hidden_dim,
             self.input_dim,
-            reparam=self.reparam,
+            use_reparam=use_reparam,
+            reparam_mean=reparam_mean,
+            reparam_std=reparam_std,
             activation=self.activation_name,
         )
 
@@ -316,7 +328,9 @@ class PirateNet(nn.Module):
                     hidden_dim=self.hidden_dim,
                     activation=activation,
                     nonlinearity=nonlinearity,
-                    reparam=self.reparam,
+                    use_reparam=use_reparam,
+                    reparam_mean=reparam_mean,
+                    reparam_std=reparam_std,
                 )
                 for _ in range(self.num_layers)
             ]

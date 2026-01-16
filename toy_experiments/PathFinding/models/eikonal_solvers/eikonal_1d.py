@@ -21,8 +21,13 @@ class NeuralEikonalSolver_1D(NeuralEikonalSolver):
         original_variance,
         weights,
         activation="ad-gauss-1",
-        fourier_emb: Union[None, Dict] = None,
-        reparam: Union[None, Dict] = None,
+        nonlinearity: float = 0.0,
+        use_fourier_features: bool = False,
+        fourier_embed_scale: float = 10.0,
+        fourier_embed_dim: int = 256,
+        use_reparam: bool = False,
+        reparam_mean: float = 0.0,
+        reparam_std: float = 0.1,
         xmin=None,
         xmax=None,
         factored: bool = True,
@@ -36,8 +41,13 @@ class NeuralEikonalSolver_1D(NeuralEikonalSolver):
             hidden_dim=hidden_dim,
             num_layers=num_layers,
             activation=activation,
-            fourier_emb=fourier_emb,
-            reparam=reparam,
+            nonlinearity=nonlinearity,
+            use_fourier_features=use_fourier_features,
+            fourier_embed_scale=fourier_embed_scale,
+            fourier_embed_dim=fourier_embed_dim,
+            use_reparam=use_reparam,
+            reparam_mean=reparam_mean,
+            reparam_std=reparam_std,
             xmin=xmin,
             xmax=xmax,
             factored=factored,
@@ -70,45 +80,53 @@ class NeuralEikonalSolver_1D(NeuralEikonalSolver):
         self.register_buffer("weights", torch.tensor(weights, dtype=torch.float32))
 
     def metric_tensor(self, inputs):
-
         # inputs shape: (N, 2, 2)
         # map to (Nx2, 2)
         inputs = inputs.view(-1, 2)
 
-        theta = inputs.requires_grad_(True)
-        N = theta.shape[0]
+        # Detach to keep metric computation independent from the training graph.
+        theta = inputs.detach().requires_grad_(True)
 
         eta_t, eta_x = self.eta(theta)
         mu_t, mu_x = self.mu(theta)
 
-        eta_vec = torch.stack([eta_t, eta_x], dim=1)
-        mu_vec = torch.stack([mu_t, mu_x], dim=1)  #
+        eta_vec = torch.stack([eta_t, eta_x], dim=1)  # (N, 2)
+        mu_vec = torch.stack([mu_t, mu_x], dim=1)     # (N, 2)
 
-        I_batch = []
-        for n in range(N):
-            # Compute Jacobians J_eta and J_mu without breaking autograd.
-            grad_eta = []
-            grad_mu = []
-            for k in range(2):
-                grad_eta_k = torch.autograd.grad(
-                    eta_vec[n, k], theta, retain_graph=True, create_graph=True
-                )[0][
-                    n
-                ]  # gradient w.r.t. theta for eta_k
-                grad_mu_k = torch.autograd.grad(
-                    mu_vec[n, k], theta, retain_graph=True, create_graph=True
-                )[0][
-                    n
-                ]  # gradient w.r.t. theta for mu_k
-                grad_eta.append(grad_eta_k)
-                grad_mu.append(grad_mu_k)
+        # Vectorized Jacobian computation
+        # For eta_vec: compute gradients for both components simultaneously
+        J_eta_list = []
+        for k in range(2):
+            grad_k = torch.autograd.grad(
+                eta_vec[:, k].sum(),
+                theta,
+                retain_graph=True,
+                create_graph=False,
+            )[0]  # (N, 2)
+            J_eta_list.append(grad_k)
+        J_eta = torch.stack(J_eta_list, dim=1)  # (N, 2, 2) - [batch, output_dim, input_dim]
 
-            J_eta = torch.stack(grad_eta, dim=0)
-            J_mu = torch.stack(grad_mu, dim=0)
-            I_batch.append(J_eta.T @ J_mu)
+        # For mu_vec: compute gradients for both components simultaneously
+        J_mu_list = []
+        for k in range(2):
+            grad_k = torch.autograd.grad(
+                mu_vec[:, k].sum(),
+                theta,
+                retain_graph=True,
+                create_graph=False,
+            )[0]  # (N, 2)
+            J_mu_list.append(grad_k)
+        J_mu = torch.stack(J_mu_list, dim=1)  # (N, 2, 2) - [batch, output_dim, input_dim]
 
-        out = torch.stack(I_batch, dim=0)
+        # Compute J_eta.T @ J_mu for all batch elements at once
+        # J_eta.T is (N, 2, 2) with dimensions [batch, input_dim, output_dim]
+        # J_mu is (N, 2, 2) with dimensions [batch, output_dim, input_dim]
+        # Result should be (N, 2, 2)
+        out = torch.einsum('nij,njk->nik', J_eta.transpose(-2, -1), J_mu)  # (N, 2, 2)
+
+        # Reshape to match expected output
         out = out.view(-1, 2, 2, 2)
+
         return out
 
     def mu(self, theta):
@@ -117,7 +135,7 @@ class NeuralEikonalSolver_1D(NeuralEikonalSolver):
         Parameters
         ----------
         theta: torch.Tensor
-            a batch of spacetime points of shape (N, 2), where the first column is the `time` component, and the second is the `space` component
+            a batch of spacetime points of shape (N, 2), where the first column is the `space` component, and the second is the `time` component
         Returns
         ----------
         mu_t : torch.Tensor
@@ -125,13 +143,15 @@ class NeuralEikonalSolver_1D(NeuralEikonalSolver):
         mu_x : torch.Tensor
             `space` component of the expectation parameter - tensor of shape (N,)
         """
-        t, x = theta[:, 0], theta[:, 1]
+        x, t = theta[:, 0], theta[:, 1]
         alpha_t, sigma_t = self.alpha_sigma(t)
-        x.requires_grad_(True)
         f = self.eds(t, x)
-        div = torch.autograd.grad(f.sum(), x, create_graph=True)[
-            0
-        ]  # In 1D the divergence is just the derivative
+        div = torch.autograd.grad(
+            f.sum(),
+            x,
+            create_graph=True,
+            retain_graph=True,
+        )[0]
         mu_t, mu_x = sigma_t**2 / alpha_t * div + f**2, f
         return mu_t, mu_x
 
@@ -141,7 +161,7 @@ class NeuralEikonalSolver_1D(NeuralEikonalSolver):
         Parameters
         ----------
         theta: torch.Tensor
-            a batch of spacetime points of shape (N, 2), where the first column is the `time` component, and the second is the `space` component
+            a batch of spacetime points of shape (N, 2), where the first column is the `space` component, and the second is the `time` component
         Returns
         ----------
         eta_t : torch.Tensor
@@ -149,7 +169,7 @@ class NeuralEikonalSolver_1D(NeuralEikonalSolver):
         eta_x : torch.Tensor
             `space` component of the natural parameter - tensor of shape (N,)
         """
-        t, x = theta[:, 0], theta[:, 1]
+        x, t = theta[:, 0], theta[:, 1]
         alpha_t, sigma_t = self.alpha_sigma(t)
         return -0.5 * alpha_t**2 / sigma_t**2, alpha_t / sigma_t**2 * x
 
@@ -158,9 +178,13 @@ class NeuralEikonalSolver_1D(NeuralEikonalSolver):
         assert t.shape == x.shape
         assert t.ndim == 1
         alpha_t, sigma_t = self.alpha_sigma(t)
-        x.requires_grad_(True)
         log_p_t = self.gaussian_mixture_density(x, t)
-        grad_log_p_t = torch.autograd.grad(log_p_t.sum(), x, create_graph=True)[0]
+        grad_log_p_t = torch.autograd.grad(
+            log_p_t.sum(),
+            x,
+            create_graph=True,
+            retain_graph=True,
+        )[0]
         res = x + sigma_t**2 * grad_log_p_t
         res = res / alpha_t
         return res

@@ -74,7 +74,6 @@ class CoordinateDataset(Dataset):
             os.path.join(self.precomputed_dir, f"samples.pt")
         )
 
-        print(self.x_min)
         current_params = {
             "num_pairs": self.num_pairs,
             "dim_signal": self.dim_signal,
@@ -136,7 +135,7 @@ class CoordinateDataset(Dataset):
 
         # Save precomputed data to disk
         precomputed_file = os.path.join(self.precomputed_dir, f"samples.pt")
-        torch.save(coords, precomputed_file)
+        torch.save(self.data, precomputed_file)
 
     def __len__(self):
         """Return the total number of sample pairs."""

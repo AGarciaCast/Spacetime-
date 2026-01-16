@@ -137,8 +137,8 @@ class NeuralEikonalSolver(nn.Module):
         out (torch.Tensor): Inverse of the metric tensor at input points.
             Shape (batch_size, 2, dim_signal+1, dim_signal+1).
         """
-        g = self.metric_tensor(inputs)
-        g_inv = torch.linalg.inv(g)
+        g = self.metric_tensor(inputs).view(-1, inputs.shape[-1], inputs.shape[-1])
+        g_inv = torch.linalg.inv(g).view(-1, 2, inputs.shape[-1], inputs.shape[-1])
         return g_inv
 
     def ambient_distance(self, inputs):
@@ -165,15 +165,17 @@ class NeuralEikonalSolver(nn.Module):
         """
         return torch.clamp(inputs, min=self.xmin, max=self.xmax)
 
-    def times_and_gradients(self, inputs, reuse_grad=False):
+    def times_and_gradients(self, inputs, reuse_grad=False, return_metric=False):
         """Computes traveltimes, and gradient w.r.t. 'xs' and 'xr' given the time output.
 
         Args:
             inputs (torch.Tensor): The pose of the input points. Shape (batch_size, 2, dim_signal+1).
             reuse_grad (bool): if true then create_graph=True, retain_graph=True
+            return_metric (bool): if true, also return the metric tensor
         Returns:
             times (torch.Tensor): The traveltimes. Shape (batch_size,).
             gradients (torch.Tensor): The gradients of traveltimes w.r.t. inputs. Shape (batch_size, 2, dim_signal+1).
+            metric (torch.Tensor, optional): The metric tensor if return_metric=True.
 
         """
 
@@ -189,10 +191,16 @@ class NeuralEikonalSolver(nn.Module):
             retain_graph=reuse_grad,
         )[0]
 
-        gradients = torch.einsum(
-            "bpij,bpj->bpi", self.inverse_metric(inputs), euc_gradients
+        # Compute metric tensor only once
+        metric = self.metric_tensor(inputs)
+        g_inv = torch.linalg.inv(metric.view(-1, inputs.shape[-1], inputs.shape[-1])).view(
+            -1, 2, inputs.shape[-1], inputs.shape[-1]
         )
 
+        gradients = torch.einsum("bpij,bpj->bpi", g_inv, euc_gradients)
+
+        if return_metric:
+            return times.squeeze(-1), gradients, metric
         return times.squeeze(-1), gradients
 
     def gradients(self, inputs, reuse_grad=False):
@@ -231,11 +239,14 @@ class NeuralEikonalSolver(nn.Module):
             norm_grad (torch.Tensor): The norm of the gradients. Shape (batch_size, 2).
         """
 
-        times, gradients = self.times_and_gradients(inputs, reuse_grad=reuse_grad)
+        # Get times, gradients, and metric tensor in one go to avoid recomputation
+        times, gradients, metric = self.times_and_gradients(inputs, reuse_grad=reuse_grad, return_metric=True)
 
         epsilon = 1e-12
         norm_grad = torch.sqrt(
-            torch.einsum("bpij,bpi,bpj->bp", self.metric(inputs), gradients, gradients)
+            torch.einsum(
+                "bpij,bpi,bpj->bp", metric, gradients, gradients
+            )
             + epsilon
         )
 

@@ -23,6 +23,8 @@ from toy_experiments.PathFinding.modules.eikonal_module import (
 import argparse
 from pathlib import Path
 
+torch.set_float32_matmul_precision("high")
+
 CHECKPOINT_PATH = Path("checkpoints").mkdir(parents=True, exist_ok=True)
 
 
@@ -42,10 +44,7 @@ def train(config_name):
 
     # Create the dataset
     train_loader, val_loader, test_loader = get_dataloaders(cfg)
-    print(
-        f"Train dataset size: {len(train_loader.dataset)}, Val dataset size: {len(val_loader.dataset)}"
-    )
-    exit()
+
     # Init model
     solver = get_solver(cfg)
 
@@ -58,6 +57,7 @@ def train(config_name):
         save_dir=cfg.logging.log_dir,
         project="SpaceTimeEikonal",
         config=omegaconf.OmegaConf.to_container(cfg, resolve=True),
+        mode="disabled" if cfg.logging.debug else "online",
     )
 
     callbacks = []
@@ -102,6 +102,9 @@ def train(config_name):
     trainer.fit(
         lightning_model, train_dataloaders=train_loader, val_dataloaders=val_loader
     )
+
+    if hasattr(logger, "finish"):
+        logger.finish()
 
 
 if __name__ == "__main__":

@@ -1,28 +1,8 @@
-import pytorch_lightning as pl
-
-
-import torch
-from omegaconf import DictConfig
-import numpy as np
 import torch
 import pytorch_lightning as pl
 from torch import nn
-
-
-import torch
-from omegaconf import DictConfig
-import numpy as np
-import torch
-import pytorch_lightning as pl
-from torch import nn
-
+from omegaconf import DictConfig, OmegaConf
 from torch.optim.lr_scheduler import LinearLR, ExponentialLR, SequentialLR
-
-from omegaconf import OmegaConf
-import time
-
-
-from tqdm import tqdm
 
 EPSILON = 1e-8
 
@@ -82,8 +62,9 @@ class EikonalLightningModule(pl.LightningModule):
                 )
 
         # Check if we obtained a new best training loss
-        if self.trainer.callback_metrics["train_eiko_epoch"] < self.best_train_loss:
-            self.best_train_loss = self.trainer.callback_metrics["train_eiko_epoch"]
+        train_eiko_epoch = self.trainer.callback_metrics.get("train_eiko_epoch")
+        if train_eiko_epoch is not None and train_eiko_epoch < self.best_train_loss:
+            self.best_train_loss = train_eiko_epoch
             self.best_train_epoch = self.trainer.current_epoch
             self.log(
                 "best_train_eiko",
@@ -124,14 +105,13 @@ class EikonalLightningModule(pl.LightningModule):
         return loss
 
     def validation_step(self, batch, batch_idx):
-        # Forward pass through the model
         batch_coords, _ = batch
-
-        # Forward pass through the model
         batch_coords = batch_coords.to(self.device)
-        outputs = self.solver.times_grad_vel(
-            batch_coords, reuse_grad=False, aux_vel=True
-        )
+        # Lightning runs validation under no_grad by default; enable grads for autograd.grad.
+        with torch.enable_grad():
+            outputs = self.solver.times_grad_vel(
+                batch_coords, reuse_grad=False, aux_vel=True
+            )
 
         times, grads, norm_grad, pred_vel = outputs
 
@@ -156,7 +136,7 @@ class EikonalLightningModule(pl.LightningModule):
         params = self.solver.parameters()
         config = self.config.optimizer
 
-        optimizer_name = config.name
+        optimizer_name = config.name.lower().capitalize()
         learning_rate = config.learning_rate
         beta1 = config.beta1
         beta2 = config.beta2
@@ -212,7 +192,7 @@ class EikonalLightningModule(pl.LightningModule):
 
         if scheduler_active:
             warmup_scheduler = LinearLR(
-                optimizer, start_factor=0.0, total_iters=warmup_steps
+                optimizer, start_factor=0.1, total_iters=warmup_steps
             )
             decay_scheduler = ExponentialLR(optimizer, gamma=decay_rate)
             scheduler = SequentialLR(

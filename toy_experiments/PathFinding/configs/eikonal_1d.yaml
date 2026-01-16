@@ -7,22 +7,23 @@ logging:
   log_every_n_steps: 10
   visualize_every_n_steps: 1000
   no_progress_bar: False
+  debug: True
 
 geometry:
   dim_signal: 1
-  x_min: [-1.0, -1.0]
-  x_max: [1.0, 1.0]
-  lambda_min: -30.0
-  lambda_max: 30.0
+  x_min: [-1.0, 0.3]
+  x_max: [1.0, 0.7]
+  lambda_min: -10.0
+  lambda_max: 10.0
   gmm_means: [0.0]
-  gmm_variances: [1.0]
-
+  gmm_variances: [0.5]
+  gmm_weights: [1.0]
 
 # Solver configuration
 solver:
-  model_type: 'pirate_net'                          # Options: 'mlp', 'pirate_net', 
+  backbone_type: 'pirate_net'                          # Options: 'mlp', 'pirate_net', 
   hidden_dim: 256
-  num_layers: 4
+  num_layers: 3
   activation: 'ad-gauss-1'                     # Options: 'relu', 'sine', 'ad-gauss-1'
   nonlinearity: 0.0                            # Nonlinearity path in pirate net
 
@@ -48,23 +49,23 @@ eikonal:
 # Data configuration
 data:
   # Coordinate dataset config
-  train_batch_size: 2560 # Number of coordinate pairs per batch
-  test_batch_size: 2560
+  train_batch_size: 320 # Number of coordinate pairs per batch
+  test_batch_size: 320
   num_pairs: 10240        # Number of coordinate pairs to sample for the dataset (in total)
   sampling_strategy: 'uniform'  # Options: 'uniform', 'curvature'
   # DataLoader configuration
   num_workers: 8    
   pin_memory: True
   train_save_data: True
-  train_force_recompute: False
+  train_force_recompute: True
   val_save_data: True
-  val_force_recompute: False
+  val_force_recompute: True
   test_save_data: True
-  test_force_recompute: False
+  test_force_recompute: True
 
 # Training configuration
 training:
-  num_epochs: 200
+  num_epochs: 1
   model_checkpoint: True
   early_stopping: True
   accumulate_grad_batches: 1
@@ -73,17 +74,17 @@ training:
 
 # Testing configuration
 test:
-  val_every_n_epochs: 100
+  val_every_n_epochs: 1
 
 
 # Optimization configuration
 optimizer:
-  name: adam                                     # Options: 'adam', 'soap', 'muon'
-  learning_rate: 1e-4
+  name: soap                                     # Options: 'adam', 'soap', 'muon'
+  learning_rate: 1e-3
   beta1: 0.9
   beta2: 0.999
   weight_decay: 0.0
   # Learning rate scheduler configuration
   use_lr_scheduler: True
-  warmup_steps: 1000
+  warmup_steps: 100
   decay_rate: 0.9
