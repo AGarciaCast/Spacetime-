@@ -6,7 +6,7 @@ from hydra import initialize, compose
 
 import torch
 import pytorch_lightning as pl
-from pytorch_lightning.loggers import WandbLogger
+from pytorch_lightning.loggers import WandbLogger, CSVLogger
 from pytorch_lightning.callbacks import (
     ModelCheckpoint,
     EarlyStopping,
@@ -52,13 +52,14 @@ def train(config_name):
     lightning_model = EikonalLightningModule(config=cfg, solver=solver)
     aux = f"{cfg.geometry.dim_signal}d_signal_{cfg.solver.backbone_type}"
     # Setup logger
-    logger = WandbLogger(
+    wandb_logger = WandbLogger(
         name="fitting_" + aux,
         save_dir=cfg.logging.log_dir,
         project="SpaceTimeEikonal",
         config=omegaconf.OmegaConf.to_container(cfg, resolve=True),
         mode="disabled" if cfg.logging.debug else "online",
     )
+    csv_logger = CSVLogger(save_dir=cfg.logging.log_dir, name="lightning_csv")
 
     callbacks = []
     if cfg.training.model_checkpoint:
@@ -84,7 +85,7 @@ def train(config_name):
 
     # Initialize a pytorch-lightning trainer
     trainer = pl.Trainer(
-        logger=logger,
+        logger=[wandb_logger, csv_logger],
         callbacks=callbacks,
         max_epochs=cfg.training.num_epochs,
         accelerator=cfg.device,
@@ -103,8 +104,8 @@ def train(config_name):
         lightning_model, train_dataloaders=train_loader, val_dataloaders=val_loader
     )
 
-    if hasattr(logger, "finish"):
-        logger.finish()
+    if hasattr(wandb_logger, "finish"):
+        wandb_logger.finish()
 
 
 if __name__ == "__main__":
