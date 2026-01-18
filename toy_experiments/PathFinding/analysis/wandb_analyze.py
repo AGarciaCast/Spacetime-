@@ -157,12 +157,12 @@ def _suggestions(report):
                 )
             )
 
-    val = loss.get("val_eiko_epoch", {})
-    train = loss.get("train_eiko_epoch", {})
+    val = loss.get("val_loss_total_epoch") or loss.get("val_eiko_epoch", {})
+    train = loss.get("train_loss_total_epoch") or loss.get("train_eiko_epoch", {})
     gap = _ratio(val.get("median"), train.get("median"))
     if gap is not None and gap > 1.1:
         suggestions.append(
-            "Validation/train eikonal gap={:.2f}. Check regularization or sampling.".format(
+            "Validation/train loss gap={:.2f}. Check regularization or sampling.".format(
                 gap
             )
         )
@@ -228,11 +228,19 @@ def _format_human_summary(report):
         )
     )
 
-    train = loss.get("train_eiko_epoch", {})
-    val = loss.get("val_eiko_epoch", {})
+    train_total = loss.get("train_loss_total_epoch", {})
+    val_total = loss.get("val_loss_total_epoch", {})
+    train_eiko = loss.get("train_eiko_epoch", {})
+    val_eiko = loss.get("val_eiko_epoch", {})
+    if train_total or val_total:
+        lines.append(
+            "Loss: train_loss_total_epoch mean={:.4f}, val_loss_total_epoch mean={:.4f}.".format(
+                train_total.get("mean", 0.0), val_total.get("mean", 0.0)
+            )
+        )
     lines.append(
-        "Loss: train_eiko_epoch mean={:.4f}, val_eiko_epoch mean={:.4f}.".format(
-            train.get("mean", 0.0), val.get("mean", 0.0)
+        "Eikonal: train_eiko_epoch mean={:.4f}, val_eiko_epoch mean={:.4f}.".format(
+            train_eiko.get("mean", 0.0), val_eiko.get("mean", 0.0)
         )
     )
 
@@ -262,6 +270,8 @@ def _format_agent_summary(report):
         "perf_step_time_mean": perf.get("step_time_sec", {}).get("mean", None),
         "perf_step_time_median": perf.get("step_time_sec", {}).get("median", None),
         "perf_samples_per_sec_mean": perf.get("samples_per_sec", {}).get("mean", None),
+        "loss_train_total_mean": loss.get("train_loss_total_epoch", {}).get("mean", None),
+        "loss_val_total_mean": loss.get("val_loss_total_epoch", {}).get("mean", None),
         "loss_train_eiko_mean": loss.get("train_eiko_epoch", {}).get("mean", None),
         "loss_val_eiko_mean": loss.get("val_eiko_epoch", {}).get("mean", None),
         "loss_train_mse_mean": loss.get("train_mse_epoch", {}).get("mean", None),
@@ -302,6 +312,12 @@ def analyze(run_dir: Path, out_path: Path, csv_root: Path):
         "summary": summary,
         "config": config,
         "loss": {
+            "train_loss_total_epoch": _basic_stats(
+                _extract_series(rows, "train_loss_total_epoch")
+            ),
+            "val_loss_total_epoch": _basic_stats(
+                _extract_series(rows, "val_loss_total_epoch")
+            ),
             "train_eiko_epoch": _basic_stats(
                 _extract_series(rows, "train_eiko_epoch")
             ),
@@ -326,6 +342,20 @@ def analyze(run_dir: Path, out_path: Path, csv_root: Path):
             "grad_norm": _basic_stats(_extract_series(rows, "optim/grad_norm")),
             "param_norm": _basic_stats(_extract_series(rows, "optim/param_norm")),
         },
+        "weighted_sampling": {
+            "weight_mean": _basic_stats(
+                _extract_series(rows, "weighted_sampling/weight_mean")
+            ),
+            "weight_min": _basic_stats(
+                _extract_series(rows, "weighted_sampling/weight_min")
+            ),
+            "weight_p50": _basic_stats(
+                _extract_series(rows, "weighted_sampling/weight_p50")
+            ),
+            "weight_max": _basic_stats(
+                _extract_series(rows, "weighted_sampling/weight_max")
+            ),
+        },
         "residual": {
             "train_residual_mean": _basic_stats(
                 _extract_series(rows, "train_residual_mean_epoch")
@@ -333,11 +363,23 @@ def analyze(run_dir: Path, out_path: Path, csv_root: Path):
             "train_residual_max": _basic_stats(
                 _extract_series(rows, "train_residual_max_epoch")
             ),
+            "train_residual_p90": _basic_stats(
+                _extract_series(rows, "train_residual_p90_epoch")
+            ),
+            "train_residual_p99": _basic_stats(
+                _extract_series(rows, "train_residual_p99_epoch")
+            ),
             "val_residual_mean": _basic_stats(
                 _extract_series(rows, "val_residual_mean_epoch")
             ),
             "val_residual_max": _basic_stats(
                 _extract_series(rows, "val_residual_max_epoch")
+            ),
+            "val_residual_p90": _basic_stats(
+                _extract_series(rows, "val_residual_p90_epoch")
+            ),
+            "val_residual_p99": _basic_stats(
+                _extract_series(rows, "val_residual_p99_epoch")
             ),
         },
         "norm_grad": {
@@ -347,11 +389,23 @@ def analyze(run_dir: Path, out_path: Path, csv_root: Path):
             "train_norm_grad_max": _basic_stats(
                 _extract_series(rows, "train_norm_grad_max_epoch")
             ),
+            "train_norm_grad_p90": _basic_stats(
+                _extract_series(rows, "train_norm_grad_p90_epoch")
+            ),
+            "train_norm_grad_p99": _basic_stats(
+                _extract_series(rows, "train_norm_grad_p99_epoch")
+            ),
             "val_norm_grad_mean": _basic_stats(
                 _extract_series(rows, "val_norm_grad_mean_epoch")
             ),
             "val_norm_grad_max": _basic_stats(
                 _extract_series(rows, "val_norm_grad_max_epoch")
+            ),
+            "val_norm_grad_p90": _basic_stats(
+                _extract_series(rows, "val_norm_grad_p90_epoch")
+            ),
+            "val_norm_grad_p99": _basic_stats(
+                _extract_series(rows, "val_norm_grad_p99_epoch")
             ),
         },
         "velocity": {
@@ -359,10 +413,32 @@ def analyze(run_dir: Path, out_path: Path, csv_root: Path):
                 _extract_series(rows, "train_vel_mean_epoch")
             ),
             "train_vel_std": _basic_stats(_extract_series(rows, "train_vel_std_epoch")),
+            "train_vel_p90": _basic_stats(_extract_series(rows, "train_vel_p90_epoch")),
+            "train_vel_p99": _basic_stats(_extract_series(rows, "train_vel_p99_epoch")),
             "val_vel_mean": _basic_stats(_extract_series(rows, "val_vel_mean_epoch")),
             "val_vel_std": _basic_stats(_extract_series(rows, "val_vel_std_epoch")),
+            "val_vel_p90": _basic_stats(_extract_series(rows, "val_vel_p90_epoch")),
+            "val_vel_p99": _basic_stats(_extract_series(rows, "val_vel_p99_epoch")),
         },
         "series": {
+            "weighted_sampling_weight_mean": _extract_series_with_steps(
+                rows, "weighted_sampling/weight_mean"
+            ),
+            "weighted_sampling_weight_min": _extract_series_with_steps(
+                rows, "weighted_sampling/weight_min"
+            ),
+            "weighted_sampling_weight_p50": _extract_series_with_steps(
+                rows, "weighted_sampling/weight_p50"
+            ),
+            "weighted_sampling_weight_max": _extract_series_with_steps(
+                rows, "weighted_sampling/weight_max"
+            ),
+            "train_loss_total_epoch": _extract_series_with_steps(
+                rows, "train_loss_total_epoch"
+            ),
+            "val_loss_total_epoch": _extract_series_with_steps(
+                rows, "val_loss_total_epoch"
+            ),
             "train_eiko_epoch": _extract_series_with_steps(rows, "train_eiko_epoch"),
             "val_eiko_epoch": _extract_series_with_steps(rows, "val_eiko_epoch"),
             "train_mse_epoch": _extract_series_with_steps(rows, "train_mse_epoch"),
@@ -380,14 +456,27 @@ def analyze(run_dir: Path, out_path: Path, csv_root: Path):
             "val_residual_mean": _extract_series_with_steps(
                 rows, "val_residual_mean_epoch"
             ),
+            "val_residual_p99": _extract_series_with_steps(
+                rows, "val_residual_p99_epoch"
+            ),
             "val_norm_grad_mean": _extract_series_with_steps(
                 rows, "val_norm_grad_mean_epoch"
             ),
+            "val_norm_grad_p99": _extract_series_with_steps(
+                rows, "val_norm_grad_p99_epoch"
+            ),
             "val_vel_mean": _extract_series_with_steps(rows, "val_vel_mean_epoch"),
+            "val_vel_p99": _extract_series_with_steps(rows, "val_vel_p99_epoch"),
         },
     }
 
     if not rows:
+        report["loss"]["train_loss_total_epoch"] = _basic_stats_from_summary(
+            summary, "train_loss_total_epoch"
+        )
+        report["loss"]["val_loss_total_epoch"] = _basic_stats_from_summary(
+            summary, "val_loss_total_epoch"
+        )
         report["loss"]["train_eiko_epoch"] = _basic_stats_from_summary(
             summary, "train_eiko_epoch"
         )

@@ -91,7 +91,7 @@ class NeuralEikonalSolver_1D(NeuralEikonalSolver):
         mu_t, mu_x = self.mu(theta)
 
         eta_vec = torch.stack([eta_t, eta_x], dim=1)  # (N, 2)
-        mu_vec = torch.stack([mu_t, mu_x], dim=1)     # (N, 2)
+        mu_vec = torch.stack([mu_t, mu_x], dim=1)  # (N, 2)
 
         # Vectorized Jacobian computation
         # For eta_vec: compute gradients for both components simultaneously
@@ -102,9 +102,13 @@ class NeuralEikonalSolver_1D(NeuralEikonalSolver):
                 theta,
                 retain_graph=True,
                 create_graph=False,
-            )[0]  # (N, 2)
+            )[
+                0
+            ]  # (N, 2)
             J_eta_list.append(grad_k)
-        J_eta = torch.stack(J_eta_list, dim=1)  # (N, 2, 2) - [batch, output_dim, input_dim]
+        J_eta = torch.stack(
+            J_eta_list, dim=1
+        )  # (N, 2, 2) - [batch, output_dim, input_dim]
 
         # For mu_vec: compute gradients for both components simultaneously
         J_mu_list = []
@@ -114,15 +118,19 @@ class NeuralEikonalSolver_1D(NeuralEikonalSolver):
                 theta,
                 retain_graph=True,
                 create_graph=False,
-            )[0]  # (N, 2)
+            )[
+                0
+            ]  # (N, 2)
             J_mu_list.append(grad_k)
-        J_mu = torch.stack(J_mu_list, dim=1)  # (N, 2, 2) - [batch, output_dim, input_dim]
+        J_mu = torch.stack(
+            J_mu_list, dim=1
+        )  # (N, 2, 2) - [batch, output_dim, input_dim]
 
         # Compute J_eta.T @ J_mu for all batch elements at once
         # J_eta.T is (N, 2, 2) with dimensions [batch, input_dim, output_dim]
         # J_mu is (N, 2, 2) with dimensions [batch, output_dim, input_dim]
         # Result should be (N, 2, 2)
-        out = torch.einsum('nij,njk->nik', J_eta.transpose(-2, -1), J_mu)  # (N, 2, 2)
+        out = torch.einsum("nij,njk->nik", J_eta.transpose(-2, -1), J_mu)  # (N, 2, 2)
 
         # Reshape to match expected output
         out = out.view(-1, 2, 2, 2)
@@ -213,3 +221,96 @@ class NeuralEikonalSolver_1D(NeuralEikonalSolver):
         )
         log_p_t = torch.logsumexp(log_probs, dim=1)
         return log_p_t
+
+    def sample_trajectory_points(
+        self,
+        n_trajectories=100,
+        n_steps=512,
+        n_points_per_trajectory=10,
+        x_range=(-2, 2),
+        t_start=1.0,
+        t_end=0,
+    ):
+        """
+        Sample points along multiple PF-ODE trajectories.
+
+        Parameters:
+        -----------
+        n_trajectories : int
+            Number of different trajectories to generate
+        n_steps : int
+            Number of integration steps per trajectory
+        n_points_per_trajectory : int
+            Number of points to sample from each trajectory
+        x_range : tuple
+            Range of initial x values to sample from
+        t_start, t_end : float
+            Start and end times for the ODE integration
+        seed : int, optional
+            Random seed for reproducibility
+
+        Returns:
+        --------
+        sampled_points : torch.Tensor
+            Shape (n_trajectories * n_points_per_trajectory, 2) where each row is (t, x)
+        trajectory_ids : torch.Tensor
+            Shape (n_trajectories * n_points_per_trajectory,) indicating which trajectory each point came from
+        """
+
+        all_sampled_points = []
+
+        for traj_id in range(n_trajectories):
+            x_init = torch.empty(
+                1, dtype=torch.float32, device=self.original_means.device
+            ).uniform_(*x_range)
+            t_trajectory, x_trajectory = self.sample(
+                x_init, n_steps, t_start, t_end
+            )
+
+            # Combine into spacetime points (x, t)
+            trajectory_points = torch.stack(
+                [x_trajectory.flatten(), t_trajectory.flatten()], dim=1
+            )
+
+            # Sample n_points_per_trajectory random points from this trajectory
+            if len(trajectory_points) >= n_points_per_trajectory:
+                indices = torch.randperm(
+                    len(trajectory_points), device=trajectory_points.device
+                )[:n_points_per_trajectory]
+                sampled_points = trajectory_points[indices]
+            else:
+                sampled_points = trajectory_points
+
+            all_sampled_points.append(sampled_points)
+
+        sampled_points = torch.cat(all_sampled_points, dim=0)
+
+        return sampled_points.detach().cpu()
+
+    def sample(self, x, n_steps, t_start=1, t_end=0):
+        """PF-ODE sampling"""
+        t = t_start * torch.ones_like(x)
+        dt_val = (t_start - t_end) / n_steps
+        all_x = [x.detach().clone()]
+        all_t = [t.detach().clone()]
+        for i in range(n_steps):
+            dt, dx = self.compute_vector_field(x, t)
+            x = x + dt * dx * dt_val
+            t = t + dt * dt_val
+            all_x.append(x.detach().clone())
+            all_t.append(t.detach().clone())
+        return torch.stack(all_t, dim=0), torch.stack(all_x, dim=0)
+
+    def compute_vector_field(self, x, t):
+        """Implementation of the PF-ODE vector field"""
+        alpha_t, sigma_t = self.alpha_sigma(t)
+        f_t = 0.5 * (self.lambda_min - self.lambda_max) * sigma_t**2
+        g2_t = (self.lambda_max - self.lambda_min) * sigma_t**2
+
+        x.requires_grad_(True)
+        log_p_t = self.gaussian_mixture_density(x, t)
+        grad_log_p_t = torch.autograd.grad(log_p_t.sum(), x, create_graph=True)[0]
+
+        dx = f_t * x - 0.5 * g2_t * grad_log_p_t
+        dt = -torch.ones_like(dx)
+        return dt.detach(), dx.detach()

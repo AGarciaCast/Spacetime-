@@ -1145,3 +1145,31 @@ class TestNeuralEikonalSolver1DIntegration:
 
             assert output_cuda.device.type == "cuda"
             assert output_cuda.shape == (3, 1)
+
+
+class TestNeuralEikonalSolver1DTrajectorySampling:
+    """Tests for trajectory sampling."""
+
+    def test_sample_trajectory_points_cpu_output(self):
+        solver = NeuralEikonalSolver_1D(
+            dim_signal=1,
+            backbone_type="mlp",
+            hidden_dim=32,
+            num_layers=2,
+            original_means=0.0,
+            original_variance=1.0,
+            weights=1.0,
+        )
+        points = solver.sample_trajectory_points(
+            n_trajectories=2,
+            n_steps=4,
+            n_points_per_trajectory=2,
+            x_range=(-1.0, 1.0),
+            t_start=1.0,
+            t_end=0.0,
+        )
+        assert isinstance(points, torch.Tensor)
+        assert points.device.type == "cpu"
+        assert points.shape == (4, 2)
+        assert torch.all(points[:, 0] >= -1.0) and torch.all(points[:, 0] <= 1.0)
+        assert torch.all(points[:, 1] >= 0.0) and torch.all(points[:, 1] <= 1.0)

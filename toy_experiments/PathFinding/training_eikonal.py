@@ -42,11 +42,12 @@ def train(config_name):
     )
     pl.seed_everything(cfg.seed)
 
-    # Create the dataset
-    train_loader, val_loader, test_loader = get_dataloaders(cfg)
-
     # Init model
     solver = get_solver(cfg)
+    solver = solver.to(cfg.device)
+
+    # Create the dataset
+    train_loader, val_loader, test_loader = get_dataloaders(cfg, solver=solver)
 
     # Assuming `model` and `train_dataset` are defined and `config` is your configuration object
     lightning_model = EikonalLightningModule(config=cfg, solver=solver)
