@@ -45,7 +45,7 @@ eikonal:
   factored: True
   power: 2.0
   residual_loss: huber                      # Options: base, 'huber', 'clip'
-  residual_huber_beta: 0.05
+  residual_huber_beta: 0.5                 
   residual_clip: 10.0
   vel_reg_weight: 0.0
 
@@ -59,8 +59,8 @@ data:
   sampling_strategy: 'mixed'  # Options: 'uniform', 'trajectory', 'mixed'
   mixed_uniform_fraction: 0.5      # Only used when sampling_strategy='mixed'
   weighted_sampling_enabled: True
-  weighted_sampling_every_n_epochs: 3
-  weighted_sampling_warmup_epochs: 10
+  weighted_sampling_every_n_epochs: 500
+  weighted_sampling_warmup_epochs: 500
   weighted_sampling_min_weight: 0.2
   weighted_sampling_max_weight: 0.7
   weighted_sampling_batch_size: 4096
@@ -82,11 +82,12 @@ data:
 
 # Training configuration
 training:
-  num_epochs: 10000
+  num_epochs: 3000
   model_checkpoint: True
   early_stopping: False
   accumulate_grad_batches: 1
-  gradient_clip_val: 0.2
+  gradient_clip_val: 1.0              # Increased from 0.2 - clips gradient NORM not values
+  gradient_clip_algorithm: 'norm'      # Explicitly use norm-based clipping
 
 
 # Testing configuration
@@ -96,11 +97,11 @@ test:
 
 # Optimization configuration
 optimizer:
-  name: soap                                     # Options: 'adam', 'soap', 'muon'
-  learning_rate: 3e-4
+  name: soap                                     # Options: 'adam', 'adamw', 'muon'
+  learning_rate: 1e-4                           # Reduced from 3e-4 for more stable convergence
   beta1: 0.9
   beta2: 0.999
-  weight_decay: 0.0
+  weight_decay: 0                           
   # Learning rate scheduler configuration
   use_lr_scheduler: True
   scheduler_type: cosine                    # Options: 'exponential', 'cosine'

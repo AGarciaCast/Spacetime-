@@ -46,6 +46,11 @@ class EikonalLightningModule(pl.LightningModule):
         self.best_train_epoch = 0
         self._train_step_start = None
 
+        # EMA for loss stabilization
+        self.register_buffer("ema_loss", torch.tensor(0.0))
+        self.ema_momentum = 0.95
+        self.ema_initialized = False
+
     def _log_batch_stats(self, prefix, norm_grad, pred_vel):
         with torch.no_grad():
             residual = (torch.pow(norm_grad, self.power) - 1.0) / self.power
@@ -158,8 +163,19 @@ class EikonalLightningModule(pl.LightningModule):
         vel_std = pred_vel.std(unbiased=False)
         loss = loss_eiko + vel_reg_weight * vel_std
 
+        # Update EMA loss for monitoring
+        with torch.no_grad():
+            if not self.ema_initialized:
+                self.ema_loss.copy_(loss.detach())
+                self.ema_initialized = True
+            else:
+                self.ema_loss.mul_(self.ema_momentum).add_(
+                    loss.detach(), alpha=1.0 - self.ema_momentum
+                )
+
         self.log("train_eiko", loss_eiko, on_step=True, on_epoch=True, prog_bar=True)
         self.log("train_loss_total", loss, on_step=True, on_epoch=True, prog_bar=True)
+        self.log("train_loss_ema", self.ema_loss, on_step=True, on_epoch=True, prog_bar=False)
         if vel_reg_weight > 0.0:
             self.log(
                 "train_vel_reg",
@@ -258,13 +274,23 @@ class EikonalLightningModule(pl.LightningModule):
             return
 
         total_norm_sq = 0.0
+        max_grad = 0.0
         for param in self.solver.parameters():
             if param.grad is None:
                 continue
             param_norm = param.grad.data.norm(2)
             total_norm_sq += param_norm.item() ** 2
+            max_grad = max(max_grad, param.grad.abs().max().item())
         total_norm = total_norm_sq**0.5
+
         self.log("optim/grad_norm", total_norm, on_step=True, on_epoch=False)
+        self.log("optim/grad_max", max_grad, on_step=True, on_epoch=False)
+
+        # Log warning if gradient is extremely large
+        if total_norm > 1e6:
+            self.log("optim/grad_explosion", 1.0, on_step=True, on_epoch=False)
+        else:
+            self.log("optim/grad_explosion", 0.0, on_step=True, on_epoch=False)
 
     def on_train_epoch_end(self):
         with torch.no_grad():

@@ -193,7 +193,15 @@ class NeuralEikonalSolver(nn.Module):
 
         # Compute metric tensor only once
         metric = self.metric_tensor(inputs)
-        g_inv = torch.linalg.inv(metric.view(-1, inputs.shape[-1], inputs.shape[-1])).view(
+
+        # Add small regularization for numerical stability
+        epsilon_reg = 1e-6
+        metric_flat = metric.view(-1, inputs.shape[-1], inputs.shape[-1])
+        identity = torch.eye(inputs.shape[-1], device=metric.device, dtype=metric.dtype)
+        metric_reg = metric_flat + epsilon_reg * identity.unsqueeze(0)
+
+        # Use stable inverse computation
+        g_inv = torch.linalg.inv(metric_reg).view(
             -1, 2, inputs.shape[-1], inputs.shape[-1]
         )
 
